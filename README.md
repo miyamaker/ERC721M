@@ -168,7 +168,7 @@ Zodomo - [@0xZodomo](https://twitter.com/0xZodomo) - zodomo@proton.me - Zodomo.e
 
 Miyagod - [@miyamaker](https://twitter.com/miyamaker) - miyacyberangel@proton.me - miyagod.eth
 
-Project Link: [[https://github.com/Zodomo/721M](https://github.com/Zodomo/ERC721M)]
+Project Link: [https://github.com/Zodomo/721M](https://github.com/Zodomo/ERC721M)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
