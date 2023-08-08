@@ -155,16 +155,18 @@ Don't forget to give the project a star! Thanks again!
 <!-- LICENSE -->
 ## License
 
-Distributed under the AGPL3 License. See `LICENSE.txt` for more information.
+Distributed under the AGPL-3.0 License. See `LICENSE.txt` for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
 
 <!-- CONTACT -->
-## Contact
+## Contacts
 
 Zodomo - [@0xZodomo](https://twitter.com/0xZodomo) - zodomo@proton.me - Zodomo.eth
+
+Miyagod - [@miyamaker](https://twitter.com/miyamaker) - miyacyberangel@proton.me - miyagod.eth
 
 Project Link: [https://github.com/Zodomo/AlignedWithRemilia](https://github.com/Zodomo/AlignedWithRemilia)
 
