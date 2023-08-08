@@ -105,12 +105,12 @@ MiyaMints was designed using Foundry, so I recommend familiarizing yourself with
    ```
 2. Install ERC721M
    ```sh
-   forge install zodomo/ERC721M --no-commit
+   forge install miyamaker/MiyaMints --no-commit
    ```
-3. Import AlignedWithRemilia<br />
+3. Import AlignedNFT<br />
    Add the following above the beginning of your project's primary contract
    ```solidity
-   import "ERC721M/ERC721M.sol";
+   import "MiyaMints/ERC721M.sol";
    ```
 4. Inherit the module<br />
    Add the following to the contract declaration
