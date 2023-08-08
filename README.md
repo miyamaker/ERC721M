@@ -177,6 +177,7 @@ Project Link: [https://github.com/Zodomo/AlignedWithRemilia](https://github.com/
 <!-- ACKNOWLEDGMENTS -->
 ## Acknowledgments
 
+* [NFTX](https://nftx.io/)
 * [Remilia](https://remilia.org/)
 * [Network Spirituality](https://ilongfornetworkspirituality.net/)
 * [Solady by Vectorized.eth](https://github.com/Vectorized/solady)
