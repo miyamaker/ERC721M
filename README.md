@@ -24,9 +24,9 @@
 <h3 align="center">MiyaMints / ERC721M</h3>
 
   <p align="center">
-    An ERC721 extension that is designed with Network Spirituality in mind.
+    An NFT launchpad that is designed with Network Spirituality in mind.
     <br />
-    ////////// THIS IS A WORK IN PROGRESS! NOT YET TESTED OR IN PRODUCTION! //////////
+    THIS IS EXPERIMENTAL CODE BUILT ON EXPERIMENTAL TECHNOLOGY, PLEASE PROCEED WITH CAUTION!!!
     <br />
     <a href="https://github.com/Zodomo/ERC721M/issues">Report Bug</a>
     ·
@@ -87,7 +87,7 @@ Liquidity rewards are locked and redirected towards deepening liquidity if the d
 <!-- GETTING STARTED -->
 ## Getting Started
 
-ERC721M was designed using Foundry, so I recommend familiarizing yourself with that if required.
+MiyaMints was designed using Foundry, so I recommend familiarizing yourself with that if required.
 
 ### Prerequisites
 
@@ -155,7 +155,7 @@ Don't forget to give the project a star! Thanks again!
 <!-- LICENSE -->
 ## License
 
-Distributed under the VPL License. See `LICENSE.txt` for more information.
+Distributed under the AGPL3 License. See `LICENSE.txt` for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
