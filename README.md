@@ -21,12 +21,12 @@
     <img src="img/IMG_0615.png" alt="Miyamaker Logo" width="125" height="125">
   </a>
 
-<h3 align="center">MiyaMints / ERC721M</h3>
+<h3 align="center">ERC721M</h3>
 
   <p align="center">
-    An NFT launchpad that is designed with Network Spirituality in mind.
+    An ERC721 extension that is designed with Network Spirituality in mind.
     <br />
-    THIS IS EXPERIMENTAL CODE BUILT ON EXPERIMENTAL TECHNOLOGY, PLEASE PROCEED WITH CAUTION!!!
+    <b>THIS IS EXPERIMENTAL CODE, PLEASE PROCEED WITH CAUTION!!!</b>
     <br />
     <a href="https://github.com/Zodomo/ERC721M/issues">Report Bug</a>
     ·
@@ -87,7 +87,7 @@ Liquidity rewards are locked and redirected towards deepening liquidity if the d
 <!-- GETTING STARTED -->
 ## Getting Started
 
-MiyaMints was designed using Foundry, so I recommend familiarizing yourself with that if required.
+ERC721M was designed using Foundry, so we recommend familiarizing yourself with that if required.
 
 ### Prerequisites
 
@@ -105,12 +105,12 @@ MiyaMints was designed using Foundry, so I recommend familiarizing yourself with
    ```
 2. Install ERC721M
    ```sh
-   forge install miyamaker/MiyaMints --no-commit
+   forge install miyamaker/ERC721M --no-commit
    ```
-3. Import AlignedNFT<br />
+3. Import the ERC721M standard<br />
    Add the following above the beginning of your project's primary contract
    ```solidity
-   import "MiyaMints/ERC721M.sol";
+   import "ERC721M/ERC721M.sol";
    ```
 4. Inherit the module<br />
    Add the following to the contract declaration
