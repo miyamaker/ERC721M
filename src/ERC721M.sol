@@ -24,7 +24,6 @@ contract ERC721M is AlignedNFT {
     error DiscountExceeded();
     error MintBurnDisabled();
     error TokenNotLockable();
-    error ArrayLengthMismatch();
     error InsufficientPayment();
     error CollectionZeroBalance();
     error NotEnoughTokensLocked();
@@ -80,7 +79,8 @@ contract ERC721M is AlignedNFT {
         _alignedNFT,
         _fundsRecipient,
         _allocation
-    ) payable {
+    )
+    payable {
         // Prevent bad royalty fee
         if (_royaltyFee > 10000) { revert BadInput(); }
         // Set all relevant metadata and contract configurations
@@ -100,7 +100,9 @@ contract ERC721M is AlignedNFT {
         else { sender = msg.sender; }
         _initializeOwner(sender);
 
-        // Configure royalties for contract owner
+        // Initialize royalties
+        _setTokenRoyalty(0, sender, uint96(_royaltyFee));
+        // Configure default royalties for contract owner
         _setDefaultRoyalty(sender, uint96(_royaltyFee));
     }
 
@@ -457,7 +459,7 @@ contract ERC721M is AlignedNFT {
     function claimRewards(address _recipient) public virtual onlyOwner { vault.claimRewards(_recipient); }
     function compoundRewards(uint112 _eth, uint112 _weth) public virtual onlyOwner { vault.compoundRewards(_eth, _weth); }
     function rescueERC20(address _token, address _to) public virtual onlyOwner {
-        if (lockedTokens[address(this)][_token][0] > 0) { revert LockedToken(); }
+        if (lockedTokens[address(this)][_token].length != 0) { revert LockedToken(); }
         vault.rescueERC20(_token, _to);
     }
     function rescueERC721(

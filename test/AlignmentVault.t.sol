@@ -9,6 +9,10 @@ import "../lib/solady/test/utils/mocks/MockERC721.sol";
 import "liquidity-helper/UniswapV2LiquidityHelper.sol";
 import "./TestingAlignmentVault.sol";
 
+interface IFallback {
+    function doesntExist(uint256 _unusedVar) external payable;
+}
+
 contract AlignmentVaultTest is DSTestPlus, ERC721Holder  {
 
     error Unauthorized();
@@ -75,6 +79,34 @@ contract AlignmentVaultTest is DSTestPlus, ERC721Holder  {
         require(alignmentVault.view_vaultId() == 392); // NFTX Milady Vault ID
     }
 
+    function testCheckBalanceNFT() public {
+        hevm.startPrank(nft.ownerOf(420));
+        nft.approve(address(this), 420);
+        nft.transferFrom(nft.ownerOf(420), address(alignmentVault), 420);
+        hevm.stopPrank();
+        require(alignmentVault.checkBalanceNFT() == 1);
+    }
+    function testCheckBalanceETH() public {
+        (bool success, ) = payable(address(alignmentVault)).call{ value: 69 ether }("");
+        require(success);
+        require(alignmentVault.checkBalanceETH() == 69 ether);
+    }
+    function testCheckBalanceWETH() public {
+        bool success = wethToken.transfer(address(alignmentVault), 69 ether);
+        require(success);
+        require(alignmentVault.checkBalanceWETH() == 69 ether);
+    }
+    // TODO: Finish NFTX inventory unstaking
+    // function testCheckBalanceNFTXInventory() public { }
+    function testCheckBalanceNFTXLiquidity() public {
+        (bool success, ) = payable(address(alignmentVault)).call{ value: 25 ether }("");
+        require(success);
+        success = wethToken.transfer(address(alignmentVault), 52 ether);
+        require(success);
+        uint256 liquidity = alignmentVault.deepenLiquidity(25 ether, 52 ether, 0);
+        require(alignmentVault.checkBalanceNFTXLiquidity() == liquidity);
+    }
+
     function test_sortTokens(address _tokenA, address _tokenB) public {
         hevm.assume(_tokenA != _tokenB);
         hevm.assume(_tokenA != address(0));
@@ -111,7 +143,14 @@ contract AlignmentVaultTest is DSTestPlus, ERC721Holder  {
         ) == 0x15A8E38942F9e353BEc8812763fb3C104c89eCf4); // MILADYWETH SLP
     }
 
-    
+    function test_estimateFloor() public view {
+        require(alignmentVault.call_estimateFloor() > 0);
+    }
+    function test_estimateFloorReversedValues() public {
+        address sproto = 0xEeca64ea9fCf99A22806Cd99b3d29cf6e8D54925;
+        TestingAlignmentVault vaultBelowWeth = new TestingAlignmentVault(address(sproto));
+        require(vaultBelowWeth.call_estimateFloor() > 0);
+    }
     
     function test_wrap(uint256 _amount) public {
         hevm.assume(_amount < 420 ether);
@@ -338,21 +377,12 @@ contract AlignmentVaultTest is DSTestPlus, ERC721Holder  {
         require(liqBalDiff > 0);
     }
     function test_rescueERC20_ETC() public {
-        testToken.transfer(address(alignmentVault), 1 ether);
-        uint256 testBal = testToken.balanceOf(address(42));
-        uint256 recoveredTEST = alignmentVault.execute_rescueERC20(address(testToken), address(42));
-        require(recoveredTEST > 0);
-        uint256 testBalDiff = testToken.balanceOf(address(42)) - testBal;
-        require(testBalDiff > 0);
-    }
-    function test_rescueERC20_ETC_liqHelper() public {
         address liqHelper = alignmentVault.view_liqHelper();
-        testToken.transfer(liqHelper, 1 ether);
-        uint256 testBal = testToken.balanceOf(address(42));
+        testToken.transfer(address(alignmentVault), 1 ether);
+        testToken.transfer(address(liqHelper), 1 ether);
         uint256 recoveredTEST = alignmentVault.execute_rescueERC20(address(testToken), address(42));
-        require(recoveredTEST > 0);
-        uint256 testBalDiff = testToken.balanceOf(address(42)) - testBal;
-        require(testBalDiff > 0);
+        require(recoveredTEST == 2 ether);
+        require(testToken.balanceOf(address(42)) == recoveredTEST);
     }
 
     function test_rescueERC721() public {
@@ -375,5 +405,9 @@ contract AlignmentVaultTest is DSTestPlus, ERC721Holder  {
         address liqHelper = alignmentVault.view_liqHelper();
         (bool success, ) = payable(liqHelper).call{ value: 1 ether }("");
         require(success);
+    }
+    function testFallback() public {
+        IFallback(address(alignmentVault)).doesntExist{ value: 1 ether }(420);
+        require(address(alignmentVault).balance == 1 ether);
     }
 }
