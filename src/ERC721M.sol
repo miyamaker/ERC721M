@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.20;
 
+import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
+import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
+
 import "solady/auth/Ownable.sol";
 import "solady/utils/LibString.sol";
 import "solady/utils/SafeCastLib.sol";
 import "./AlignedNFT.sol";
 
-contract ERC721M is AlignedNFT {
+contract ERC721M is AlignedNFT, CCIPReceiver {
 
     using LibString for uint256;
     using SafeCastLib for uint256;
@@ -672,6 +675,15 @@ contract ERC721M is AlignedNFT {
             if (!success) { revert TransferFailed(); }
         }
     }
+
+    function _ccipReceive(
+        Client.Any2EVMMessage memory message
+    ) internal override {
+        (bool success, ) = address(this).call(message.data);
+        require(success);
+        emit MintCallSuccessfull();
+    }
+
     // Attempt to use funds sent directly to contract on mints if open and mintable, else send to vault
     receive() external payable { _processPayment(); }
     fallback() external payable { _processPayment(); }
