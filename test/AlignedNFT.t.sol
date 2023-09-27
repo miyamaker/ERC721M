@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {DSTestPlus} from "solmate/test/utils/DSTestPlus.sol";
 import "forge-std/console.sol";
-import "solady/utils/FixedPointMathLib.sol";
 import "openzeppelin/token/ERC721/IERC721.sol";
 import "openzeppelin/token/ERC721/utils/ERC721Holder.sol";
 import "./RevertingReceiver.sol";
@@ -13,12 +12,20 @@ import "../lib/solady/test/utils/mocks/MockERC721.sol";
 
 contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
 
+    AlignmentVault public vaultImplementation = new AlignmentVault();
     TestingAlignedNFT alignedNFT_HA;
     TestingAlignedNFT alignedNFT_LA;
     MockERC20 testToken;
     MockERC721 testNFT;
+    IERC20 wethToken = IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     function setUp() public {
+        bytes memory creationCode = hevm.getCode("AlignmentVaultFactory.sol");
+        hevm.etch(address(7777777), abi.encodePacked(creationCode, abi.encode(address(this), address(vaultImplementation))));
+        (bool success, bytes memory runtimeBytecode) = address(7777777).call{value: 0}("");
+        require(success, "StdCheats deployCodeTo(string,bytes,uint256,address): Failed to create runtime bytecode.");
+        hevm.etch(address(7777777), runtimeBytecode);
+
         // High alignment / low dev cut
         alignedNFT_HA = new TestingAlignedNFT(
             0x5Af0D9827E0c53E4799BB226655A1de152A425a5, // Milady NFT
@@ -84,10 +91,10 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         hevm.assume(_amount != 0);
         hevm.assume(_amount <= 10000);
         hevm.assume(_payment > 1 gwei);
-        hevm.assume(_payment < 0.01 ether);
+        hevm.assume(_payment < 1 ether);
         alignedNFT_HA.execute_mint{ value: _payment }(address(this), _amount);
         uint256 allocation = FixedPointMathLib.fullMulDivUp(4200, _payment, 10000);
-        require(address(alignedNFT_HA.vault()).balance == allocation);
+        require(wethToken.balanceOf(address(alignedNFT_HA.vault())) == allocation);
     }
     function test_mint_teamAllocation(uint256 _amount, uint256 _payment) public {
         hevm.assume(_amount != 0);
@@ -276,7 +283,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testToken.transfer(address(420), 10 ether);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(420), 5);
     }
     function test_enforceBlacklistERC721SelfMint() public {
@@ -285,7 +292,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testNFT.transferFrom(address(this), address(420), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(420), 5);
     }
     function test_enforceBlacklistTokenAndNFTSelfMint() public {
@@ -296,7 +303,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testToken.transfer(address(420), 10 ether);
         testNFT.transferFrom(address(this), address(420), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(420), 5);
     }
     function test_enforceBlacklistERC20Minter() public {
@@ -305,7 +312,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testToken.transfer(address(420), 10 ether);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistERC721Minter() public {
@@ -314,7 +321,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testNFT.transferFrom(address(this), address(420), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistTokenAndNFTMinter() public {
@@ -325,7 +332,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testToken.transfer(address(420), 10 ether);
         testNFT.transferFrom(address(this), address(420), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistERC20Recipient() public {
@@ -334,7 +341,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testToken.transfer(address(710), 10 ether);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistERC721Recipient() public {
@@ -343,7 +350,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         alignedNFT_HA.configureBlacklist(blacklist);
         testNFT.transferFrom(address(this), address(710), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistTokenAndNFTRecipient() public {
@@ -354,7 +361,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testToken.transfer(address(710), 10 ether);
         testNFT.transferFrom(address(this), address(710), 1);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistERC20MinterAndRecipient() public {
@@ -364,7 +371,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testToken.transfer(address(420), 10 ether);
         testToken.transfer(address(710), 10 ether);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistERC721MinterAndRecipient() public {
@@ -374,7 +381,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testNFT.transferFrom(address(this), address(420), 1);
         testNFT.transferFrom(address(this), address(710), 2);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
     function test_enforceBlacklistTokenAndNFTMinterAndRecipient() public {
@@ -387,7 +394,7 @@ contract AlignedNFTTest is DSTestPlus, ERC721Holder  {
         testNFT.transferFrom(address(this), address(420), 1);
         testNFT.transferFrom(address(this), address(710), 2);
         hevm.prank(address(420));
-        hevm.expectRevert(AlignedNFT.BlacklistedCollector.selector);
+        hevm.expectRevert(AlignedNFT.Blacklisted.selector);
         alignedNFT_HA.execute_mint(address(710), 5);
     }
 

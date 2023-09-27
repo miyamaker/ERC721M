@@ -2,10 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {DSTestPlus} from "solmate/test/utils/DSTestPlus.sol";
+import "forge-std/console.sol";
+import "liquidity-helper/UniswapV2LiquidityHelper.sol";
 import "openzeppelin/token/ERC721/utils/ERC721Holder.sol";
-import "../lib/solady/test/utils/mocks/MockERC20.sol";
 import "../lib/solady/test/utils/mocks/MockERC721.sol";
-import "solady/utils/LibString.sol";
+import "manual-tests/UnburnableERC20.sol";
+import "manual-tests/FakeSendERC20.sol";
+import "../src/AlignmentVault.sol";
 import "../src/ERC721M.sol";
 
 interface IFallback {
@@ -45,17 +48,49 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
         uint256 remainingQty
     );
 
+    struct MintInfo {
+        int64 supply;
+        int64 allocated;
+        bool active;
+        uint256 tokenBalance;
+        uint256 mintPrice;
+    }
+    struct MinterInfo {
+        uint256 amount;
+        uint256[] amounts;
+        uint40[] timelocks;
+    }
+
+    AlignmentVault public vaultImplementation = new AlignmentVault();
     ERC721M public template;
+    ERC721M public manualInit;
     IERC721 public nft = IERC721(0x5Af0D9827E0c53E4799BB226655A1de152A425a5); // Milady NFT
     MockERC20 public testToken;
+    UnburnableERC20 public testUnburnableToken;
+    FakeSendERC20 public testFakeSendToken;
     MockERC721 public testNFT;
+    IWETH weth = IWETH(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    IERC20 wethToken = IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    IUniswapV2Router02 sushiRouter = IUniswapV2Router02(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
+    IERC20 nftxInv = IERC20(0x227c7DF69D3ed1ae7574A1a7685fDEd90292EB48); // NFTX MILADY token
+    IUniswapV2Pair nftWeth = IUniswapV2Pair(0x15A8E38942F9e353BEc8812763fb3C104c89eCf4); // MILADYWETH SLP
 
     function setUp() public {
-        template = new ERC721M(
+        bytes memory creationCode = hevm.getCode("AlignmentVaultFactory.sol");
+        hevm.etch(address(7777777), abi.encodePacked(creationCode, abi.encode(address(this), address(vaultImplementation))));
+        (bool success, bytes memory runtimeBytecode) = address(7777777).call{value: 0}("");
+        require(success, "StdCheats deployCodeTo(string,bytes,uint256,address): Failed to create runtime bytecode.");
+        hevm.etch(address(7777777), runtimeBytecode);
+
+        template = new ERC721M();
+        template.initialize(
             2000,
             500,
             address(nft),
-            address(42),
+            address(this),
+            0
+        );
+        template.initializeMetadata(
             "ERC721M Test",
             "ERC721M",
             "https://miya.wtf/api/",
@@ -63,11 +98,80 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
             100,
             0.01 ether
         );
+        template.changeFundsRecipient(address(42));
         hevm.deal(address(this), 1000 ether);
         testToken = new MockERC20("Test Token", "TEST", 18);
         testToken.mint(address(this), 100 ether);
+        testUnburnableToken = new UnburnableERC20("Unburnable Token", "UBTEST", 18);
+        testUnburnableToken.mint(address(this), 100 ether);
+        testFakeSendToken = new FakeSendERC20("Fake Send Token", "FSTEST", 18);
+        testFakeSendToken.mint(address(this), 100 ether);
         testNFT = new MockERC721();
         testNFT.safeMint(address(this), 1);
+        testNFT.safeMint(address(this), 2);
+        testNFT.safeMint(address(this), 3);
+    }
+
+    function testInitialize() public {
+        manualInit = new ERC721M();
+        manualInit.initialize(
+            2000,
+            500,
+            address(nft),
+            address(this),
+            0
+        );
+        manualInit.initializeMetadata(
+            "ERC721M Test",
+            "ERC721M",
+            "https://miya.wtf/api/",
+            "https://miya.wtf/contract.json",
+            100,
+            0.01 ether
+        );
+        manualInit.disableInitializers();
+        require(manualInit.allocation() == 2000);
+        (address recipient, uint256 royalty) = manualInit.royaltyInfo(0, 1 ether);
+        require(recipient == address(this));
+        require(royalty == 0.05 ether);
+        require(manualInit.alignedNft() == address(nft));
+        require(manualInit.owner() == address(this));
+        require(keccak256(abi.encodePacked(manualInit.name())) == keccak256(abi.encodePacked("ERC721M Test")));
+        require(keccak256(abi.encodePacked(manualInit.symbol())) == keccak256(abi.encodePacked("ERC721M")));
+        require(keccak256(abi.encodePacked(manualInit.baseURI())) == keccak256(abi.encodePacked("https://miya.wtf/api/")));
+        require(keccak256(abi.encodePacked(manualInit.contractURI())) == keccak256(abi.encodePacked("https://miya.wtf/contract.json")));
+        require(manualInit.maxSupply() == 100);
+        require(manualInit.price() == 0.01 ether);
+    }
+    function testInitialize_NotAligned() public {
+        manualInit = new ERC721M();
+        hevm.expectRevert(ERC721M.NotAligned.selector);
+        manualInit.initialize(
+            250,
+            500,
+            address(nft),
+            address(this),
+            0
+        );
+    }
+    function testInitialize_BadInput() public {
+        manualInit = new ERC721M();
+        hevm.expectRevert(AlignedNFT.BadInput.selector);
+        manualInit.initialize(
+            12345,
+            500,
+            address(nft),
+            address(this),
+            0
+        );
+        hevm.expectRevert(AlignedNFT.BadInput.selector);
+        manualInit.initialize(
+            2000,
+            42069,
+            address(nft),
+            address(this),
+            0
+        );
     }
 
     function testName() public view {
@@ -77,7 +181,7 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
         require(keccak256(abi.encodePacked(template.symbol())) == keccak256(abi.encodePacked("ERC721M")));
     }
     function testBaseUri() public view {
-        require(keccak256(abi.encodePacked(template.baseUri())) == keccak256(abi.encodePacked("https://miya.wtf/api/")));
+        require(keccak256(abi.encodePacked(template.baseURI())) == keccak256(abi.encodePacked("https://miya.wtf/api/")));
     }
     function testContractURI() public view {
         require(keccak256(abi.encodePacked(template.contractURI())) == keccak256(abi.encodePacked("https://miya.wtf/contract.json")));
@@ -112,7 +216,7 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
 
     function testUpdateBaseURI() public {
         template.updateBaseURI("ipfs://miyahash/");
-        require(keccak256(abi.encodePacked(template.baseUri())) == keccak256(abi.encodePacked("ipfs://miyahash/")));
+        require(keccak256(abi.encodePacked(template.baseURI())) == keccak256(abi.encodePacked("ipfs://miyahash/")));
     }
     function testUpdateBaseURI_URILocked() public {
         template.lockURI();
@@ -122,6 +226,12 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
     function testLockURI() public {
         template.lockURI();
         require(template.uriLocked() == true);
+    }
+
+    function testTransferOwnership(address _newOwner) public {
+        hevm.assume(_newOwner != address(0));
+        template.transferOwnership(_newOwner);
+        require(template.owner() == _newOwner, "ownership transfer error");
     }
 
     function testMint(address _to, uint64 _amount) public {
@@ -152,417 +262,329 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
         template.mint{ value: 0.01 ether * 101 }(address(this), 101);
     }
 
-    /*function testConfigureMintDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-        require(template.collectionDiscount(token, 0) == price[0], "price error");
-        require(template.collectionDiscount(token, 1) == required[0], "required error");
-        require(template.collectionDiscount(token, 2) == quantity[0], "quantity error");
+    function configureMintDiscountERC20() public {
+        address[] memory assets = new address[](1);
+        bool[] memory status = new bool[](1);
+        int64[] memory allocations = new int64[](1);
+        uint256[] memory tokenBalances = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+        assets[0] = address(testToken);
+        status[0] = true;
+        allocations[0] = 10;
+        tokenBalances[0] = 2 ether;
+        prices[0] = 0.025 ether;
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
     }
-    function testConfigureMintDiscountOverwriteDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-
-        template.openMint();
-        template.mintDiscount{ value: 0.001 ether }(token, address(this), 1);
-
-        price[0] = 0.002 ether;
-        required[0] = 2 ether;
-        quantity[0] = 9;
-        hevm.expectEmit(true, true, true, true);
-        emit DiscountOverwritten(address(testToken), 0.001 ether, 1 ether, 9);
-        template.configureMintDiscount(asset, price, required, quantity);
+    function configureMintDiscountERC721() public {
+        address[] memory assets = new address[](1);
+        bool[] memory status = new bool[](1);
+        int64[] memory allocations = new int64[](1);
+        uint256[] memory tokenBalances = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+        assets[0] = address(testNFT);
+        status[0] = true;
+        allocations[0] = 10;
+        tokenBalances[0] = 2;
+        prices[0] = 0.025 ether;
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
     }
-    function testConfigureMintDiscountEraseDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-
-        price[0] = 100 ether;
-        required[0] = 69 ether;
-        quantity[0] = 0;
-        template.configureMintDiscount(asset, price, required, quantity);
-        hevm.expectEmit(true, true, true, true);
-        emit DiscountDeleted(token);
-        template.configureMintDiscount(asset, price, required, quantity);
+    function testConfigureMintDiscountERC20() public {
+        configureMintDiscountERC20();
+        (
+            int64 supply,
+            int64 allocated,
+            bool active,
+            uint256 tokenBalance,
+            uint256 mintPrice
+        ) = template.mintDiscountInfo(address(testToken));
+        require(supply == 10, "supply error");
+        require(allocated == 10, "allocated error");
+        require(active == true, "active error");
+        require(tokenBalance == 2 ether, "tokenBalance error");
+        require(mintPrice == 0.025 ether, "mintPrice error");
+    }
+    function testConfigureMintDiscountERC721() public {
+        configureMintDiscountERC721();
+        (
+            int64 supply,
+            int64 allocated,
+            bool active,
+            uint256 tokenBalance,
+            uint256 mintPrice
+        ) = template.mintDiscountInfo(address(testNFT));
+        require(supply == 10, "supply error");
+        require(allocated == 10, "allocated error");
+        require(active == true, "active error");
+        require(tokenBalance == 2, "tokenBalance error");
+        require(mintPrice == 0.025 ether, "mintPrice error");
     }
     function testConfigureMintDiscount_ArrayLengthMismatch() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](2);
-        asset[0] = token;
-        asset[1] = address(this);
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
+        address[] memory assets = new address[](1);
+        bool[] memory status = new bool[](2);
+        int64[] memory allocations = new int64[](1);
+        uint256[] memory tokenBalances = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+        assets[0] = address(testToken);
+        status[0] = true;
+        status[1] = false;
+        allocations[0] = 10;
+        tokenBalances[0] = 2 ether;
+        prices[0] = 0.025 ether;
         hevm.expectRevert(LockRegistry.ArrayLengthMismatch.selector);
-        template.configureMintDiscount(asset, price, required, quantity);
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
     }
-
-    function testMintDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-
-        template.openMint();
-        template.mintDiscount{ value: 0.001 ether }(token, address(this), 1);
-        require(template.balanceOf(address(this)) == 1);
-        require(address(template.vault()).balance == 0.0002 ether);
-        require(address(template).balance == 0.0008 ether);
-        quantity[0] = 9;
-        require(template.collectionDiscount(token, 2) == quantity[0], "quantity error");
+    function testConfigureMintDiscount_Underflow() public {
+        address[] memory assets = new address[](1);
+        bool[] memory status = new bool[](1);
+        int64[] memory allocations = new int64[](1);
+        uint256[] memory tokenBalances = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+        assets[0] = address(testToken);
+        status[0] = true;
+        allocations[0] = 10;
+        tokenBalances[0] = 2 ether;
+        prices[0] = 0.025 ether;
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
+        allocations[0] = -11;
+        hevm.expectRevert(ERC721M.Underflow.selector);
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
     }
-    function testMintDiscountBatchMint() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-
-        template.openMint();
-        template.mintDiscount{ value: 0.003 ether }(token, address(this), 3);
-        require(template.balanceOf(address(this)) == 3);
-        require(address(template.vault()).balance == 0.0006 ether);
-        require(address(template).balance == 0.0024 ether);
-        quantity[0] = 7;
-        require(template.collectionDiscount(token, 2) == quantity[0], "quantity error");
+    function testConfigureMintDiscountReduceToZero() public {
+        address[] memory assets = new address[](1);
+        bool[] memory status = new bool[](1);
+        int64[] memory allocations = new int64[](1);
+        uint256[] memory tokenBalances = new uint256[](1);
+        uint256[] memory prices = new uint256[](1);
+        assets[0] = address(testToken);
+        status[0] = true;
+        allocations[0] = 10;
+        tokenBalances[0] = 2 ether;
+        prices[0] = 0.025 ether;
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
+        allocations[0] = -10;
+        template.configureMintDiscount(assets, status, allocations, tokenBalances, prices);
+        (
+            int64 supply,
+            int64 allocated,
+            bool active,
+            uint256 tokenBalance,
+            uint256 mintPrice
+        ) = template.mintDiscountInfo(address(testToken));
+        require(supply == 0, "supply error");
+        require(allocated == 0, "allocated error");
+        require(active == false, "active error");
+        require(tokenBalance == 2 ether, "tokenBalance error");
+        require(mintPrice == 0.025 ether, "mintPrice error");
     }
-    function testMintDiscountUnconfigured_NoDiscount() public {
-        address token = address(testToken);
+    function testMintDiscountERC20() public {
+        configureMintDiscountERC20();
         template.openMint();
-        hevm.expectRevert(ERC721M.NoDiscount.selector);
-        template.mintDiscount{ value: 0.003 ether }(token, address(this), 3);
+        address asset = address(testToken);
+        address to = address(this);
+        uint64 amount = 2;
+        uint256 payment = 0.05 ether;
+        template.mintDiscount{ value: payment }(asset, to, amount);
+        require(template.balanceOf(address(this)) == 2, "balance error");
+        require(template.ownerOf(1) == address(this), "owner/tokenId error");
+        require(template.ownerOf(2) == address(this), "owner/tokenId error");
+        require(wethToken.balanceOf(address(template.vault())) == 0.01 ether, "vault balance error");
+        require(address(template).balance == 0.04 ether, "contract balance error");
+        (
+            int64 supply,
+            int64 allocated,
+            bool active,
+            uint256 tokenBalance,
+            uint256 mintPrice
+        ) = template.mintDiscountInfo(address(testToken));
+        require(supply == 8, "supply error");
+        require(allocated == 10, "allocated error");
+        require(active == true, "active error");
+        require(tokenBalance == 2 ether, "tokenBalance error");
+        require(mintPrice == 0.025 ether, "mintPrice error");
     }
-    function testMintDiscountErased_NoDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 10;
-        template.configureMintDiscount(asset, price, required, quantity);
-
-        price[0] = 100 ether;
-        required[0] = 69 ether;
-        quantity[0] = 0;
-        template.configureMintDiscount(asset, price, required, quantity);
-        hevm.expectEmit(true, true, true, true);
-        emit DiscountDeleted(token);
-        template.configureMintDiscount(asset, price, required, quantity);
-
+    function testMintDiscountERC721() public {
+        configureMintDiscountERC721();
         template.openMint();
-        hevm.expectRevert(ERC721M.NoDiscount.selector);
-        template.mintDiscount{ value: 0.003 ether }(token, address(this), 3);
+        address asset = address(testNFT);
+        address to = address(this);
+        uint64 amount = 2;
+        uint256 payment = 0.05 ether;
+        template.mintDiscount{ value: payment }(asset, to, amount);
+        require(template.balanceOf(address(this)) == 2, "balance error");
+        require(template.ownerOf(1) == address(this), "owner/tokenId error");
+        require(template.ownerOf(2) == address(this), "owner/tokenId error");
+        require(wethToken.balanceOf(address(template.vault())) == 0.01 ether, "vault balance error");
+        require(address(template).balance == 0.04 ether, "contract balance error");
+        (
+            int64 supply,
+            int64 allocated,
+            bool active,
+            uint256 tokenBalance,
+            uint256 mintPrice
+        ) = template.mintDiscountInfo(address(testNFT));
+        require(supply == 8, "supply error");
+        require(allocated == 10, "allocated error");
+        require(active == true, "active error");
+        require(tokenBalance == 2, "tokenBalance error");
+        require(mintPrice == 0.025 ether, "mintPrice error");
     }
-    function testMintDiscountExhausted_NoDiscount() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 2;
-        template.configureMintDiscount(asset, price, required, quantity);
-
+    function testMintDiscount_NotActive() public {
         template.openMint();
-        template.mintDiscount{ value: 0.01 ether }(token, address(this), 2);
-        require(template.balanceOf(address(this)) == 2);
-        require(address(template.vault()).balance == 0.002 ether);
-        require(address(template).balance == 0.008 ether);
-
-        hevm.expectRevert(ERC721M.NoDiscount.selector);
-        template.mintDiscount{ value: 0.0042 ether }(token, address(this), 1);
+        address asset = address(testNFT);
+        address to = address(this);
+        uint64 amount = 2;
+        uint256 payment = 0.05 ether;
+        hevm.expectRevert(ERC721M.NotActive.selector);
+        template.mintDiscount{ value: payment }(asset, to, amount);
     }
-    function testMintDiscount_DiscountExceeded() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 2;
-        template.configureMintDiscount(asset, price, required, quantity);
-
+    function testMintDiscount_SpecialExceeded() public {
+        configureMintDiscountERC721();
         template.openMint();
-        hevm.expectRevert(ERC721M.DiscountExceeded.selector);
-        template.mintDiscount{ value: 0.01 ether }(token, address(this), 3);
+        address asset = address(testNFT);
+        address to = address(this);
+        uint64 amount = 11;
+        uint256 payment = 0.275 ether;
+        hevm.expectRevert(ERC721M.SpecialExceeded.selector);
+        template.mintDiscount{ value: payment }(asset, to, amount);
     }
-    function testMintDiscount_InsufficientAssetBalance() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 0.001 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 42069 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 2;
-        template.configureMintDiscount(asset, price, required, quantity);
-
+    function testMintDiscount_InsufficientBalance() public {
+        configureMintDiscountERC721();
         template.openMint();
-        hevm.expectRevert(ERC721M.InsufficientAssetBalance.selector);
-        template.mintDiscount{ value: 0.01 ether }(token, address(this), 2);
+        address asset = address(testNFT);
+        address to = address(this);
+        uint64 amount = 2;
+        uint256 payment = 0.05 ether;
+        hevm.deal(address(420), 10 ether);
+        hevm.expectRevert(ERC721M.InsufficientBalance.selector);
+        hevm.prank(address(420));
+        template.mintDiscount{ value: payment }(asset, to, amount);
     }
     function testMintDiscount_InsufficientPayment() public {
-        address token = address(testToken);
-        address[] memory asset = new address[](1);
-        asset[0] = token;
-        uint256[] memory price = new uint256[](1);
-        price[0] = 1 ether;
-        uint256[] memory required = new uint256[](1);
-        required[0] = 1 ether;
-        uint256[] memory quantity = new uint256[](1);
-        quantity[0] = 2;
-        template.configureMintDiscount(asset, price, required, quantity);
-
+        configureMintDiscountERC721();
         template.openMint();
+        address asset = address(testNFT);
+        address to = address(this);
+        uint64 amount = 2;
+        uint256 payment = 0.04 ether;
         hevm.expectRevert(ERC721M.InsufficientPayment.selector);
-        template.mintDiscount{ value: 0.01 ether }(token, address(this), 2);
+        template.mintDiscount{ value: payment }(asset, to, amount);
     }
-
-    function testConfigureMintLockTokens() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](1);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        quantity[0] = 10;
-
-        hevm.expectEmit(true, true, true, true);
-        emit MintLockDiscount(address(testToken), 0.0042 ether, 1 ether, block.timestamp + 1000, 10);
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-    }
-    function testConfigureMintLockTokensMultiple() public {
-        address[] memory tokens = new address[](2);
-        uint256[] memory discounts = new uint256[](2);
-        uint256[] memory amounts = new uint256[](2);
-        uint256[] memory timestamps = new uint256[](2);
-        uint256[] memory quantity = new uint256[](2);
-        tokens[0] = address(testToken);
-        tokens[1] = address(42069);
-        discounts[0] = 0.0042 ether;
-        discounts[1] = 0.0069 ether;
-        amounts[0] = 1 ether;
-        amounts[1] = 2 ether;
-        timestamps[0] = block.timestamp + 1000;
-        timestamps[1] = block.timestamp + 2000;
-        quantity[0] = 10;
-        quantity[1] = 20;
-
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-        require(template.lockableTokens(tokens[1], 0) == 0.0069 ether);
-        require(template.lockableTokens(tokens[1], 1) == 2 ether);
-        require(template.lockableTokens(tokens[1], 2) == block.timestamp + 2000);
-        require(template.lockableTokens(tokens[1], 3) == 20);
-    }
-    function testConfigureMintLockTokensEraseDiscount() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](1);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        quantity[0] = 10;
-
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-        quantity[0] = 0;
-        hevm.expectEmit(true, true, true, true);
-        emit MintLockDiscountDeleted(tokens[0]);
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-    }
-    function testConfigureMintLockTokensOverwriteDiscount() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](1);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        quantity[0] = 10;
-
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-        discounts[0] = 1 ether;
-        amounts[0] = 2 ether;
-        timestamps[0] = block.timestamp + 100000;
-        quantity[0] = 20;
-        hevm.expectEmit(true, true, true, true);
-        emit MintLockDiscountOverwritten(address(testToken), 0.0042 ether, 1 ether, block.timestamp + 1000, 10);
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-    }
-    function testConfigureMintLockTokens_ArrayLengthMismatch() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](2);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        timestamps[1] = 42069;
-        quantity[0] = 10;
-        hevm.expectRevert(LockRegistry.ArrayLengthMismatch.selector);
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-    }
-
-    function testMintLockTokens() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](1);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        quantity[0] = 10;
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
+    function testMintDiscountAll() public {
+        configureMintDiscountERC20();
         template.openMint();
-        testToken.approve(address(template), type(uint256).max);
-        template.mintLockTokens{ value: 0.0042 ether }(address(this), tokens, amounts);
-        require(template.balanceOf(address(this)) == 1);
+        address asset = address(testToken);
+        address to = address(this);
+        uint64 amount = 10;
+        uint256 payment = 0.25 ether;
+        template.mintDiscount{ value: payment }(asset, to, amount);
     }
-    function testMintLockTokensMultiple() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory discounts = new uint256[](1);
-        uint256[] memory amounts = new uint256[](1);
-        uint256[] memory timestamps = new uint256[](1);
-        uint256[] memory quantity = new uint256[](1);
-        tokens[0] = address(testToken);
-        discounts[0] = 0.0042 ether;
-        amounts[0] = 1 ether;
-        timestamps[0] = block.timestamp + 1000;
-        quantity[0] = 10;
-        template.configureMintLockTokens(tokens, discounts, amounts, timestamps, quantity);
-        template.openMint();
-        testToken.approve(address(template), type(uint256).max);
-        template.mintLockTokens{ value: 0.0042 ether }(address(this), tokens, amounts);
-        template.mintLockTokens{ value: 0.0042 ether }(address(this), tokens, amounts);
-        require(template.balanceOf(address(this)) == 2);
-    }
-    function testMintLockTokens_MintClosed() public {
-        address[] memory tokens = new address[](1);
-        uint256[] memory amounts = new uint256[](1);
-        hevm.expectRevert(ERC721M.MintClosed.selector);
-        template.mintLockTokens(address(this), tokens, amounts);
-    }*/
 
-    function testWrap(uint256 _amount) public {
-        hevm.assume(_amount < 10 ether);
-        (bool success, ) = payable(address(template.vault())).call{ value: _amount }("");
-        require(success);
-        template.wrap(_amount);
+    function testFixInventory() public {
+        hevm.startPrank(nft.ownerOf(42));
+        nft.approve(address(this), 42);
+        nft.transferFrom(nft.ownerOf(42), address(template), 42);
+        hevm.stopPrank();
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = 42;
+        template.fixInventory(tokenIds);
+        hevm.deal(address(template.vault()), 10 ether);
+        template.alignLiquidity();
+        require(nft.balanceOf(address(template)) == 0);
+        require(nft.balanceOf(address(template.vault())) == 0);
     }
-    function testAddInventory() public {
-        hevm.assume(nft.ownerOf(42) > address(0));
+
+    function testCheckInventory() public {
         hevm.startPrank(nft.ownerOf(42));
         nft.approve(address(this), 42);
         nft.transferFrom(nft.ownerOf(42), address(template.vault()), 42);
         hevm.stopPrank();
-        uint256[] memory tokenId = new uint256[](1);
-        tokenId[0] = 42;
-        template.addInventory(tokenId);
+        hevm.deal(address(template.vault()), 10 ether);
+        template.alignLiquidity();
+        require(nft.balanceOf(address(template.vault())) == 1);
+        uint256[] memory tokenIds = new uint256[](1);
+        tokenIds[0] = 42;
+        template.checkInventory(tokenIds);
+        hevm.deal(address(template.vault()), 10 ether);
+        template.alignLiquidity();
+        require(nft.balanceOf(address(template.vault())) == 0);
     }
-    function testAddLiquidity() public {
-        hevm.assume(nft.ownerOf(42) > address(0));
-        hevm.startPrank(nft.ownerOf(42));
-        nft.approve(address(this), 42);
-        nft.transferFrom(nft.ownerOf(42), address(template.vault()), 42);
-        hevm.stopPrank();
-        uint256[] memory tokenId = new uint256[](1);
-        tokenId[0] = 42;
-        (bool success, ) = payable(address(template.vault())).call{ value: 50 ether }("");
-        require(success);
-        template.wrap(50 ether);
-        template.addLiquidity(tokenId);
+
+    function testAlignLiquidityNoLiquidity() public {
+        template.alignLiquidity();
     }
-    function testDeepenLiquidity() public {
-        (bool success, ) = payable(address(template.vault())).call{ value: 2 ether }("");
-        require(success);
-        template.wrap(1 ether);
-        template.deepenLiquidity(1 ether, 1 ether, 0);
+    function testAlignLiquidityETH() public {
+        address vault = address(template.vault());
+        hevm.deal(vault, 1 ether);
+        require(address(vault).balance == 1 ether);
+        template.alignLiquidity();
+        require(address(vault).balance == 0, "eth balance error");
     }
-    function testStakeLiquidity() public {
-        (bool success, ) = payable(address(template.vault())).call{ value: 2 ether }("");
-        require(success);
-        template.wrap(1 ether);
-        template.deepenLiquidity(1 ether, 1 ether, 0);
-        template.stakeLiquidity();
+
+    function testClaimYieldNone() public {
+        template.claimYield(address(this));
     }
-    function testClaimRewardsCallable() public {
-        template.claimRewards(address(this));
+    function testCompoundYieldNone() public {
+        template.claimYield(address(0));
     }
-    function testCompoundRewards() public {
-        (bool success, ) = payable(address(template.vault())).call{ value: 2 ether }("");
-        require(success);
-        template.wrap(1 ether);
-        template.compoundRewards(1 ether, 1 ether);
+    function testClaimYieldNoneRenounced() public {
+        template.renounceOwnership();
+        template.claimYield(address(this));
     }
+    function testCompoundYieldNoneRenounced() public {
+        template.renounceOwnership();
+        template.claimYield(address(0));
+    }
+    function testClaimYield_Unauthorized() public {
+        hevm.prank(address(1));
+        hevm.expectRevert(Ownable.Unauthorized.selector);
+        template.claimYield(address(1));
+    }
+    // TODO: GENERATE YIELD PROPERLY
+    function testClaimYieldGenerated() public {
+        hevm.deal(address(template.vault()), 100 ether);
+        template.alignLiquidity();
+        weth.deposit{ value: 100 ether }();
+        wethToken.approve(address(sushiRouter), type(uint256).max);
+        nftxInv.approve(address(sushiRouter), type(uint256).max);
+        address[] memory path = new address[](2);
+        uint256 balance;
+        for (uint256 i; i < 10; ++i) {
+            balance = wethToken.balanceOf(address(this));
+            path[0] = address(weth);
+            path[1] = address(nftxInv);
+            sushiRouter.swapExactTokensForTokens(balance, 1, path, address(this), block.timestamp);
+            uint256 nftxBal = nftxInv.balanceOf(address(this));
+            path[0] = address(nftxInv);
+            path[1] = address(weth);
+            sushiRouter.swapExactTokensForTokens(nftxBal, 1, path, address(this), block.timestamp);
+        }
+        template.claimYield(address(this));
+        //require(nftxInv.balanceOf(address(this)) > 0, "nftxInv claim balance error");
+    }
+    // TODO: Test claiming generated yield after renounce
 
     function testRescueERC20() public {
-        testToken.transfer(address(template.vault()), 1 ether);
+        testToken.transfer(address(template), 1 ether);
         template.rescueERC20(address(testToken), address(42));
         require(testToken.balanceOf(address(42)) >= 1 ether);
     }
-    // TODO: Implement tests for token locking
-    // function testRescueERC20_LockedToken() public { }
     function testRescueERC721() public {
+        testNFT.transferFrom(address(this), address(template), 1);
+        template.rescueERC721(address(testNFT), address(42), 1);
+        require(testNFT.ownerOf(1) == address(42));
+    }
+    function testRescueERC721Vault() public {
         testNFT.transferFrom(address(this), address(template.vault()), 1);
         template.rescueERC721(address(testNFT), address(42), 1);
         require(testNFT.ownerOf(1) == address(42));
+    }
+    function testRescueERC721AlignedAsset() public {
+        hevm.startPrank(nft.ownerOf(42));
+        nft.approve(address(this), 42);
+        nft.transferFrom(nft.ownerOf(42), address(template), 42);
+        hevm.stopPrank();
+        template.rescueERC721(address(nft), address(42), 42);
+        require(nft.ownerOf(42) == address(template.vault()));
     }
 
     function testWithdrawFunds() public {
@@ -591,11 +613,22 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
     function testReceive() public {
         (bool success, ) = payable(address(template)).call{ value: 1 ether }("");
         require(success);
-        require(address(template.vault()).balance == 1 ether);
+        require(wethToken.balanceOf(address(template.vault())) == 1 ether);
     }
     function testFallback() public {
         IFallback(address(template)).doesntExist{ value: 1 ether }(420);
-        require(address(template.vault()).balance == 1 ether);
+        require(wethToken.balanceOf(address(template.vault())) == 1 ether);
+    }
+    function testOnERC721Received() public {
+        hevm.startPrank(nft.ownerOf(42));
+        nft.approve(address(this), 42);
+        nft.safeTransferFrom(nft.ownerOf(42), address(template), 42);
+        hevm.stopPrank();
+        require(nft.ownerOf(42) == address(template.vault()), "NFT redirection failed");
+    }
+    function testOnERC721Received_UnwantedNFT() public {
+        hevm.expectRevert(ERC721M.UnwantedNFT.selector);
+        testNFT.safeTransferFrom(address(this), address(template), 1);
     }
     function test_processPayment() public {
         template.openMint();

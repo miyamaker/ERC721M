@@ -4,20 +4,32 @@ pragma solidity ^0.8.20;
 import {DSTestPlus} from "solmate/test/utils/DSTestPlus.sol";
 import "openzeppelin/token/ERC721/utils/ERC721Holder.sol";
 import "../src/ERC721M.sol";
+import "../src/AlignmentVault.sol";
 
 contract ERC721MTest is DSTestPlus, ERC721Holder {
 
     using LibString for uint256;
 
+    AlignmentVault public vaultImplementation = new AlignmentVault();
     ERC721M public template;
     IERC721 public nft = IERC721(0x5Af0D9827E0c53E4799BB226655A1de152A425a5); // Milady NFT
 
     function setUp() public {
-        template = new ERC721M(
+        bytes memory creationCode = hevm.getCode("AlignmentVaultFactory.sol");
+        hevm.etch(address(7777777), abi.encodePacked(creationCode, abi.encode(address(this), address(vaultImplementation))));
+        (bool success, bytes memory runtimeBytecode) = address(7777777).call{value: 0}("");
+        require(success, "StdCheats deployCodeTo(string,bytes,uint256,address): Failed to create runtime bytecode.");
+        hevm.etch(address(7777777), runtimeBytecode);
+
+        template = new ERC721M();
+        template.initialize(
             2000,
             500,
             address(nft),
-            address(42),
+            address(this),
+            0
+        );
+        template.initializeMetadata(
             "ERC721M Test",
             "ERC721M",
             "https://miya.wtf/api/",
@@ -25,6 +37,7 @@ contract ERC721MTest is DSTestPlus, ERC721Holder {
             100,
             0.01 ether
         );
+        template.changeFundsRecipient(address(42));
         hevm.deal(address(this), 1000 ether);
     }
 
